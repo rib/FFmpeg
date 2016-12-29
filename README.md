@@ -1,49 +1,74 @@
-FFmpeg README
-=============
+Branch of FFmpeg that supports building with clang-cl
+=====================================================
 
-FFmpeg is a collection of libraries and tools to process multimedia content
-such as audio, video, subtitles and related metadata.
+Dependencies
+============
 
-## Libraries
+Cygwin environment including python, yasm, yasm-devel, make
 
-* `libavcodec` provides implementation of a wider range of codecs.
-* `libavformat` implements streaming protocols, container formats and basic I/O access.
-* `libavutil` includes hashers, decompressors and miscellaneous utility functions.
-* `libavfilter` provides a mean to alter decoded Audio and Video through chain of filters.
-* `libavdevice` provides an abstraction to access capture and playback devices.
-* `libswresample` implements audio mixing and resampling routines.
-* `libswscale` implements color conversion and scaling routines.
+I'm using clang-cl from LLVM developer snapshots here: http://llvm.org/builds/ (have been using the 64bit builds)
 
-## Tools
+As per the clang-cl documentation you need to use vscarsall.bat to set up your environment. I use a script like this to run the cygwin terminal:
 
-* [ffmpeg](https://ffmpeg.org/ffmpeg.html) is a command line toolbox to
-  manipulate, convert and stream multimedia content.
-* [ffplay](https://ffmpeg.org/ffplay.html) is a minimalistic multimedia player.
-* [ffprobe](https://ffmpeg.org/ffprobe.html) is a simple analysis tool to inspect
-  multimedia content.
-* [ffserver](https://ffmpeg.org/ffserver.html) is a multimedia streaming server
-  for live broadcasts.
-* Additional small tools such as `aviocat`, `ismindex` and `qt-faststart`.
+```bash
+@echo off
 
-## Documentation
+echo "Loading Visual Studio environment..."
+call "C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\vcvarsall.bat" x64
 
-The offline documentation is available in the **doc/** directory.
+echo "Starting mintty..."
+start C:\cygwin64\bin\mintty.exe -i /Cygwin-Terminal.ico -
+```
 
-The online documentation is available in the main [website](https://ffmpeg.org)
-and in the [wiki](https://trac.ffmpeg.org).
+An annoying problem I hit was that clang-cl.exe also handles running link.exe but doesn't forward .o files to the linker if they come after a /link option, and on the other hand doesn't forward .lib files to the linker if they come before. I wrote this wrapper linker script, named link.py at the root of the source directory:
 
-### Examples
+```
+#!/usr/bin/env python
+import sys
+from subprocess import call
 
-Coding examples are available in the **doc/examples** directory.
+libs = []
+final_args = [ 'clang-cl.exe' ]
 
-## License
+for arg in sys.argv[1:]:
+    if arg.endswith(('.lib')):
+        libs.append(arg)
+    else:
+        final_args.append(arg)
 
-FFmpeg codebase is mainly LGPL-licensed with optional components licensed under
-GPL. Please refer to the LICENSE file for detailed information.
+if len(libs) > 0:
+    final_args.append("-link")
+    for lib in libs:
+        final_args.append(lib)
 
-## Contributing
+ret = call(final_args)
+sys.exit(ret)
+```
 
-Patches should be submitted to the ffmpeg-devel mailing list using
-`git format-patch` or `git send-email`. Github pull requests should be
-avoided because they are not part of our review process. Few developers
-follow pull requests so they will likely be ignored.
+To build ffplay with SDL I downloaded SDL devel binaries from here: https://www.libsdl.org/download-1.2.php (note 1x not 2x)
+I hacked an sdl-config script at the root of the ffmpeg source directory:
+
+```
+#!/bin/sh
+
+if test "$1" = "--libs"; then
+    echo "-L../SDL/lib/x64 -lSDL"
+elif test "$1" = "--cflags"; then
+    echo "-I../SDL/include"
+fi
+```
+*Note may need to run dos2unix to keep cygwin/bash happy*
+
+Building
+========
+
+The ffmpeg source directory needs to be added to your PATH so that the link.py and sdl-config scripts will be found.
+
+`./configure --prefix=/cygdrive/c/Users/Robert/local/ffmpeg-cl --toolchain=msvc --cc=clang-cl.exe --ld=link.py --ar=llvm-lib --enable-sdl --enable-shared`
+
+Notes about ./configure script changes
+======================================
+
+clang-cl doesn't handle all the #pragmas of msvc for intrinsics and so the script makes sure to add `-D__BMI__ -FIintrin.h` to the build cflags.
+
+The way the script would recognise the MSVC cl.exe compiler didn't Just Work™ to recognise clang-cl.exe so the script needed another section to recognise and init common variables similar to how it would for msvc (but different enough to warrent a separate section).
