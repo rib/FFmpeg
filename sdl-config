@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# XXX: NB: the paths are for clang-cl.exe which will expect windows
+# paths not cygwin paths
+if test "$1" = "--version"; then
+    echo "1.2.15"
+elif test "$1" = "--libs"; then
+    echo "/libpath:../SDL/lib/x64 SDL.lib"
+elif test "$1" = "--cflags"; then
+    echo "-I../SDL/include"
+fi
+

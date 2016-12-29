@@ -893,6 +893,8 @@ check_cc(){
     log check_cc "$@"
     cat > $TMPC
     log_file $TMPC
+    cp $TMPC ./foo.c
+    echo "DEBUG:" $cc $CPPFLAGS $CFLAGS "$@" $CC_C $(cc_o $TMPO) $TMPC
     check_cmd $cc $CPPFLAGS $CFLAGS "$@" $CC_C $(cc_o $TMPO) $TMPC
 }
 
@@ -985,6 +987,7 @@ check_ld(){
     check_$type $($cflags_filter $flags) || return
     flags=$($ldflags_filter $flags)
     libs=$($ldflags_filter $libs)
+    echo "LD DEBUG LD_O=$LD_O:" $ld $LDFLAGS $flags $(ld_o $TMPE) $TMPO $libs $extralibs
     check_cmd $ld $LDFLAGS $flags $(ld_o $TMPE) $TMPO $libs $extralibs
 }
 
@@ -3716,7 +3719,7 @@ msvc_common_flags(){
             -Wall)                ;;
             -std=c99)             ;;
             # Common flags
-            -fomit-frame-pointer) ;;
+            -fomit-frame-pointer) echo -Oy ;;
             -g)                   echo -Z7 ;;
             -fno-math-errno)      ;;
             -fno-common)          ;;
@@ -3724,13 +3727,14 @@ msvc_common_flags(){
             -fPIC)                ;;
             -mthumb)              ;;
             -march=*)             ;;
+            -Wl,*)                ;;
             -lz)                  echo zlib.lib ;;
             -lavifil32)           echo vfw32.lib ;;
             -lavicap32)           echo vfw32.lib user32.lib ;;
             -lx264)               echo libx264.lib ;;
             -l*)                  echo ${flag#-l}.lib ;;
             -LARGEADDRESSAWARE)   echo $flag ;;
-            -L*)                  echo -libpath:${flag#-L} ;;
+            -L*)                  echo /libpath:${flag#-L} ;;
             *)                    echo $flag ;;
         esac
     done
@@ -3941,11 +3945,33 @@ probe_cc(){
         _cflags_size='-O3 -mf=2'
         _flags_filter=tms470_flags
     elif $_cc -v 2>&1 | grep -q clang; then
-        _type=clang
-        _ident=$($_cc --version 2>/dev/null | head -n1)
-        _depflags='-MMD -MF $(@:.o=.d) -MT $@'
-        _cflags_speed='-O3'
-        _cflags_size='-Os'
+         if $_cc -v 2>&1 | grep -q "pc-windows-msvc"; then # clang-cl.exe
+            _type=msvc
+            _ident=$($_cc 2>&1 | head -n1)
+            _DEPCMD='$(DEP$(1)) $(DEP$(1)FLAGS) $($(1)DEP_FLAGS) $< 2>&1 | awk '\''/including/ { sub(/^.*file: */, ""); gsub(/\\/, "/"); if (!match($$0, / /)) print "$@:", $$0 }'\'' > $(@:.o=.d)'
+            _DEPFLAGS='$(CPPFLAGS) $(CFLAGS) -showIncludes -Zs'
+            _cflags_speed="-O2"
+            _cflags_size="-O1"
+            if $_cc -nologo- 2>&1 | grep -q Linker; then
+                _ld_o='-out:$@'
+            else
+                _ld_o='-Fe$@'
+            fi
+            _cc_o='-Fo$@'
+            _cc_e='-P -Fi$@'
+            _flags_filter=msvc_flags
+            _ld_lib='lib%.lib'
+            _ld_path='/libpath:'
+            _flags='-nologo'
+            _cflags='-D_USE_MATH_DEFINES -D_CRT_SECURE_NO_WARNINGS -D_CRT_NONSTDC_NO_WARNINGS -D__BMI__ -FIintrin.h'
+            disable stripping
+        else
+            _type=clang
+            _ident=$($_cc --version 2>/dev/null | head -n1)
+            _depflags='-MMD -MF $(@:.o=.d) -MT $@'
+            _cflags_speed='-O3'
+            _cflags_size='-Os'
+        fi
     elif $_cc -V 2>&1 | grep -q Sun; then
         _type=suncc
         _ident=$($_cc -V 2>&1 | head -n1 | cut -d' ' -f 2-)
@@ -4751,11 +4777,26 @@ case $target_os in
             LD_LIB='%.lib'
             # Cannot build both shared and static libs with MSVC or icl.
             disable static
+            if disabled debug; then
+                add_ldexeflags /MD
+                add_ldlibflags /MD
+            else
+                add_ldexeflags /MDd
+                add_ldlibflags /MDd
+            fi
+        else
+            if disabled debug; then
+                add_ldexeflags /MT
+            else
+                add_ldexeflags /MTd
+            fi
         fi
         enabled x86_32 && check_ldflags -LARGEADDRESSAWARE
         shlibdir_default="$bindir_default"
-        SLIBPREF=""
+        LIBPREF=""
+        SLIBPREF="" #needs to match LIBPREF for -implib: argument below...
         SLIBSUF=".dll"
+        LIBSUF=".lib"
         SLIBNAME_WITH_VERSION='$(SLIBPREF)$(FULLNAME)-$(LIBVERSION)$(SLIBSUF)'
         SLIBNAME_WITH_MAJOR='$(SLIBPREF)$(FULLNAME)-$(LIBMAJOR)$(SLIBSUF)'
         SLIB_CREATE_DEF_CMD='$(SRC_PATH)/compat/windows/makedef $(SUBDIR)lib$(NAME).ver $(OBJS) > $$(@:$(SLIBSUF)=.def)'
@@ -4763,7 +4804,7 @@ case $target_os in
         SLIB_INSTALL_LINKS=
         SLIB_INSTALL_EXTRA_SHLIB='$(SLIBNAME:$(SLIBSUF)=.lib)'
         SLIB_INSTALL_EXTRA_LIB='$(SLIBNAME_WITH_MAJOR:$(SLIBSUF)=.def)'
-        SHFLAGS='-dll -def:$$(@:$(SLIBSUF)=.def) -implib:$(SUBDIR)$(SLIBNAME:$(SLIBSUF)=.lib)'
+        SHFLAGS='/LD /def:$$(@:$(SLIBSUF)=.def) /implib:$(SUBDIR)$(SLIBNAME:$(SLIBSUF)=.lib)'
         objformat="win32"
         ranlib=:
         enable dos_paths
